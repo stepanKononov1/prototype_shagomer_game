@@ -1,25 +1,24 @@
 package com.example.myapplication;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.widget.TextView;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 
 public class StepCounterActivity extends AppCompatActivity implements SensorEventListener {
 
     private SensorManager sensorManager;
-    private Sensor accelerometer;
+    private Sensor stepCounterSensor;
     private TextView stepCountTextView;
-    private int stepCount = 0;
-
-    private KalmanFilter kalmanFilter;
-    private static final float STEP_THRESHOLD = 1.2f;  // Динамический порог
-    private float lastMagnitude = 0;
-    private long lastStepTime = 0;
-    private static final int STEP_TIME_DIFF = 300;  // Минимальное время между шагами (мс)
+    private int initialStepCount = -1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -27,20 +26,30 @@ public class StepCounterActivity extends AppCompatActivity implements SensorEven
         setContentView(R.layout.activity_step_counter);
 
         stepCountTextView = findViewById(R.id.step_count_text_view);
-        kalmanFilter = new KalmanFilter(0.001f, 0.1f);  // Инициализация фильтра
-        stepCountTextView.setText("Steps: " + stepCount);
 
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+
         if (sensorManager != null) {
-            accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+            stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+        }
+
+        if (stepCounterSensor == null) {
+            stepCountTextView.setText("Step Counter Sensor not available");
+        }
+
+        // Запрос разрешения для Android 10+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACTIVITY_RECOGNITION}, 100);
+            }
         }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (sensorManager != null) {
-            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
+        if (stepCounterSensor != null) {
+            sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
         }
     }
 
@@ -54,64 +63,25 @@ public class StepCounterActivity extends AppCompatActivity implements SensorEven
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-            float rawMagnitude = (float) Math.sqrt(
-                    event.values[0] * event.values[0] +
-                            event.values[1] * event.values[1] +
-                            event.values[2] * event.values[2]
-            );
-
-            float filteredMagnitude = kalmanFilter.update(rawMagnitude);  // Применяем фильтр Калмана
-            float delta = Math.abs(filteredMagnitude - lastMagnitude);
-
-            long currentTime = System.currentTimeMillis();
-            if (delta > STEP_THRESHOLD && (currentTime - lastStepTime > STEP_TIME_DIFF)) {
-                stepCount++;
-                lastStepTime = currentTime;
-                stepCountTextView.setText("Steps: " + stepCount);
+        if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
+            if (initialStepCount < 0) {
+                initialStepCount = (int) event.values[0];
             }
-
-            lastMagnitude = filteredMagnitude;
+            int stepsSinceStart = (int) event.values[0] - initialStepCount;
+            stepCountTextView.setText("Steps: " + stepsSinceStart);
         }
-    }
-
-    @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        outState.putInt("stepCount", stepCount);
-    }
-
-    @Override
-    protected void onRestoreInstanceState(Bundle savedInstanceState) {
-        super.onRestoreInstanceState(savedInstanceState);
-        stepCount = savedInstanceState.getInt("stepCount");
-        stepCountTextView.setText("Steps: " + stepCount);
     }
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
 
-    // Фильтр Калмана для сглаживания шума
-    private static class KalmanFilter {
-        private float q; // Process noise covariance
-        private float r; // Measurement noise covariance
-        private float x; // Value
-        private float p; // Estimation error covariance
-        private float k; // Kalman gain
-
-        public KalmanFilter(float q, float r) {
-            this.q = q;
-            this.r = r;
-            this.p = 1;
-            this.x = 0;
-        }
-
-        public float update(float measurement) {
-            p = p + q;
-            k = p / (p + r);
-            x = x + k * (measurement - x);
-            p = (1 - k) * p;
-            return x;
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 100 && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            if (stepCounterSensor != null) {
+                sensorManager.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI);
+            }
         }
     }
 }
